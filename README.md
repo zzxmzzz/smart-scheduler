@@ -38,14 +38,25 @@ http://localhost:8080
 
 ## 账号说明
 
-当前第一版内置 4 个身份，可在右上角切换：
+系统内置 4 个身份：
 
 - 领导：可以编辑排班、审批申请、设置节假日
 - 张三：员工 A
 - 李四：员工 B
 - 王五：员工 C
 
-正式给员工使用时，员工看不到“管理”入口；领导账号可以进入管理页完成同步登录、备份和维护。
+Supabase Authentication 里的用户只是登录账号。页面显示的姓名、角色和权限在系统的“管理/账号”页维护，并通过邮箱和 Supabase 用户对应。
+
+默认邮箱映射如下，可由领导在“管理 → 人员与账号”里修改：
+
+| 人员 | 默认邮箱 | 权限 |
+| --- | --- | --- |
+| 领导 | `leader@example.com` | 管理排班、审批申请、维护人员信息 |
+| 张三 | `zhangsan@example.com` | 查看个人排班、提交申请 |
+| 李四 | `lisi@example.com` | 查看个人排班、提交申请 |
+| 王五 | `wangwu@example.com` | 查看个人排班、提交申请 |
+
+正式使用时，员工需要用自己的 Supabase Auth 邮箱和密码登录。登录后系统会自动锁定到对应员工身份，员工不需要也不能手动切换成别人。
 
 ## Supabase 同步配置
 
@@ -63,7 +74,8 @@ https://rlwmgtiuhpfqytqbydhm.supabase.co
 4. 打开系统的“管理”页。
 5. 输入 Supabase Auth 登录邮箱和密码。
 6. 点击“保存并登录”。
-7. 测试修改排班、提交休假、审批同步。
+7. 领导进入“人员与账号”，按实际情况修改显示姓名和绑定邮箱。
+8. 测试修改排班、提交休假、审批同步。
 
 注意：不要把 Supabase `service_role` 或 `secret` key 放到网页里。前端只能使用 publishable key。
 
@@ -76,7 +88,6 @@ https://rlwmgtiuhpfqytqbydhm.supabase.co
 - `index.html`
 - `styles.css`
 - `app.js`
-- `supabase-schema.sql`
 - `README.md`
 
 然后在 GitHub 仓库设置里开启 Pages，选择部署根目录即可。

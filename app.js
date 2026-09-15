@@ -47,10 +47,10 @@ const HOLIDAY_MODES = {
 };
 
 const DEFAULT_MEMBERS = [
-  { id: "leader", code: "L", name: "领导", role: "leader", title: "管理员" },
-  { id: "a", code: "A", name: "张三", role: "employee", title: "员工 A" },
-  { id: "b", code: "B", name: "李四", role: "employee", title: "员工 B" },
-  { id: "c", code: "C", name: "王五", role: "employee", title: "员工 C" },
+  { id: "leader", code: "L", name: "领导", role: "leader", title: "管理员", email: "leader@example.com" },
+  { id: "a", code: "A", name: "张三", role: "employee", title: "员工 A", email: "zhangsan@example.com" },
+  { id: "b", code: "B", name: "李四", role: "employee", title: "员工 B", email: "lisi@example.com" },
+  { id: "c", code: "C", name: "王五", role: "employee", title: "员工 C", email: "wangwu@example.com" },
 ];
 
 const CYCLE = [
@@ -114,7 +114,7 @@ function loadState() {
 
 function createDefaultState() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     currentUserId: "leader",
     members: DEFAULT_MEMBERS,
     overrides: [],
@@ -129,15 +129,28 @@ function normalizeState(nextState) {
   nextState = nextState && typeof nextState === "object" ? nextState : {};
   const base = createDefaultState();
   const merged = { ...base, ...nextState };
-  merged.members = Array.isArray(nextState.members) && nextState.members.length
-    ? nextState.members
-    : base.members;
+  merged.schemaVersion = 2;
+  merged.members = normalizeMembers(nextState.members);
   merged.overrides = Array.isArray(nextState.overrides) ? nextState.overrides : [];
   merged.leaveRequests = Array.isArray(nextState.leaveRequests) ? nextState.leaveRequests : [];
   merged.holidays = Array.isArray(nextState.holidays) ? nextState.holidays : [];
   merged.auditLogs = Array.isArray(nextState.auditLogs) ? nextState.auditLogs : [];
   if (!getMember(merged.currentUserId, merged)) merged.currentUserId = "leader";
   return merged;
+}
+
+function normalizeMembers(nextMembers) {
+  const savedMembers = Array.isArray(nextMembers) ? nextMembers : [];
+  const savedById = new Map(savedMembers.map((member) => [member.id, member]));
+  return DEFAULT_MEMBERS.map((defaultMember) => {
+    const saved = savedById.get(defaultMember.id) || {};
+    return {
+      ...defaultMember,
+      name: cleanText(saved.name) || defaultMember.name,
+      title: cleanText(saved.title) || defaultMember.title,
+      email: normalizeEmail(saved.email) || defaultMember.email,
+    };
+  });
 }
 
 function persistState(options = {}) {
@@ -148,7 +161,6 @@ function persistState(options = {}) {
 }
 
 function render() {
-  if (!isLeader() && ui.view === "settings") ui.view = "home";
   const user = getCurrentUser();
   app.innerHTML = `
     <div class="app-shell">
@@ -219,16 +231,25 @@ function renderWeekControl() {
 }
 
 function renderUserSelect(id) {
+  const authMember = getAuthenticatedMember();
+  if (authMember && authMember.role === "employee") {
+    return `
+      <div class="identity-lock" title="已登录账号，身份已自动锁定">
+        <span class="identity-dot"></span>
+        <span>${escapeHtml(authMember.name)}</span>
+      </div>
+    `;
+  }
   return renderCustomSelect({
     id,
     value: state.currentUserId,
     action: "switch-user",
-    ariaLabel: "切换当前用户",
+    ariaLabel: isLeader() ? "切换查看对象" : "切换当前用户",
     compact: true,
     options: state.members.map((member) => ({
       value: member.id,
       label: member.name,
-      note: member.role === "leader" ? "领导账号" : member.title,
+      note: member.role === "leader" ? "领导账号" : `${member.title}${member.email ? ` · ${member.email}` : ""}`,
     })),
   });
 }
@@ -319,8 +340,8 @@ function renderNav(className) {
     { id: "mine", label: "我的", icon: "我" },
     { id: "requests", label: isLeader() ? "审批" : "申请", icon: "调" },
     { id: "stats", label: "统计", icon: "统" },
+    { id: "settings", label: isLeader() ? "管理" : "账号", icon: isLeader() ? "管" : "账" },
   ];
-  if (isLeader()) items.push({ id: "settings", label: "管理", icon: "管" });
   return `
     <nav class="${className}" aria-label="主导航">
       ${items.map((item) => `
@@ -352,14 +373,19 @@ function renderHome() {
   const lateMember = getMemberByShift(assignments, "late");
   const restMember = getMemberByShift(assignments, "rest");
   const pendingCount = state.leaveRequests.filter((request) => request.status === "pending").length;
+  const leaderMode = isLeader();
+  const leaderViewingSelf = leaderMode && user.role === "leader";
+  const heroTitle = leaderMode
+    ? leaderViewingSelf ? "你好，领导" : `正在查看${user.name}`
+    : `你好，${user.name}`;
 
   return `
     <div class="hero-grid">
       <section class="hero-card">
-        <h2>${user.role === "leader" ? "你好，领导" : `你好，${escapeHtml(user.name)}`}</h2>
+        <h2>${escapeHtml(heroTitle)}</h2>
         <p>${formatDateFull(today)}</p>
         <div class="today-shift">
-          ${user.role === "leader"
+          ${leaderViewingSelf
             ? `
               <div class="shift-icon early">今</div>
               <div>
@@ -378,11 +404,11 @@ function renderHome() {
       </section>
       <section class="action-card">
         <button class="quick-action" data-action="quick-request" type="button">
-          <span><strong>${isLeader() ? "处理休假申请" : "提交休假/换班"}</strong><span>${isLeader() ? `${pendingCount} 个待审批事项` : "节假日、临时请假都从这里提交"}</span></span>
+          <span><strong>${leaderMode ? "处理休假申请" : "提交休假/换班"}</strong><span>${leaderMode ? `${pendingCount} 个待审批事项` : "节假日、临时请假都从这里提交"}</span></span>
           <span>›</span>
         </button>
-        <button class="quick-action" data-action="${isLeader() ? "quick-holiday" : "nav"}" data-view="mine" type="button">
-          <span><strong>${isLeader() ? "节假日批量调整" : "查看我的排班"}</strong><span>${isLeader() ? "全员休息、保留班次、自动平衡" : "本周和未来 30 天一眼看清"}</span></span>
+        <button class="quick-action" data-action="${leaderMode ? "quick-holiday" : "nav"}" data-view="mine" type="button">
+          <span><strong>${leaderMode ? "节假日批量调整" : "查看我的排班"}</strong><span>${leaderMode ? "全员休息、保留班次、自动平衡" : "本周和未来 30 天一眼看清"}</span></span>
           <span>›</span>
         </button>
       </section>
@@ -840,16 +866,20 @@ function renderAuditLogs(logs) {
 function renderSettings() {
   const config = loadSupabaseConfig();
   const connected = canUseRemote();
+  const actor = getActor();
+  const authMember = getAuthenticatedMember();
+  const authEmail = getAuthEmail();
   const exportText = escapeHtml(JSON.stringify(state, null, 2));
   return `
     <section class="content-card">
       <div class="section-head">
         <div>
-          <h2 class="section-title">管理与同步</h2>
-          <div class="section-subtitle">${connected ? "已登录云端同步账号。" : "Supabase 项目已配置，登录后开启多设备同步。"}</div>
+          <h2 class="section-title">${isLeader() ? "管理与同步" : "账号与同步"}</h2>
+          <div class="section-subtitle">${connected ? `已登录为 ${escapeHtml(actor.name)}。` : "登录 Supabase 账号后开启多设备同步。"}</div>
         </div>
       </div>
-      <p class="settings-note">先在 Supabase 的 SQL Editor 执行项目里的 <strong>supabase-schema.sql</strong>，再用 Authentication 里创建的账号登录。</p>
+      <p class="settings-note">Supabase Authentication 里的用户是登录账号；这里的人员资料决定页面显示姓名和领导/员工权限，二者通过邮箱自动对应。</p>
+      ${renderAccountStatus(authMember, authEmail)}
       <form class="form-grid" data-action="save-supabase">
         <div class="field-row">
           <label for="supabase-url">Supabase URL</label>
@@ -861,22 +891,37 @@ function renderSettings() {
         </div>
         <div class="field-row">
           <label for="supabase-email">登录邮箱</label>
-          <input id="supabase-email" name="email" type="email" placeholder="leader@example.com" value="${escapeHtml(config.email || "")}" />
+          <input id="supabase-email" name="email" type="email" placeholder="leader@example.com" value="${escapeHtml(config.email || "")}" autocomplete="username" />
         </div>
         <div class="field-row">
           <label for="supabase-password">登录密码</label>
-          <input id="supabase-password" name="password" type="password" placeholder="输入 Supabase Auth 密码" />
+          <input id="supabase-password" name="password" type="password" placeholder="${connected ? "重新登录或切换账号时再输入" : "输入 Supabase Auth 密码"}" autocomplete="current-password" />
         </div>
         <div class="button-row">
-          <button class="primary-button" type="submit">保存并登录</button>
-          <button class="secondary-button" data-action="load-remote" type="button">从云端读取</button>
-          <button class="plain-button" data-action="save-remote" type="button">上传当前数据</button>
+          <button class="primary-button" type="submit">${connected ? "重新登录" : "保存并登录"}</button>
+          ${connected ? `<button class="secondary-button" data-action="load-remote" type="button">从云端读取</button>` : ""}
+          ${connected && isLeader() ? `<button class="plain-button" data-action="save-remote" type="button">上传当前数据</button>` : ""}
           ${connected ? `<button class="danger-button" data-action="logout-supabase" type="button">退出同步</button>` : ""}
         </div>
       </form>
     </section>
-    <div class="dashboard-grid">
+    ${isLeader() ? renderMemberSettings() : `
       <section class="content-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">我的账号</h2>
+            <div class="section-subtitle">员工登录后系统会自动锁定到自己的身份。</div>
+          </div>
+        </div>
+        <div class="alert ok">
+          <strong>${connected ? "已启用账号模式" : "未登录账号"}</strong>
+          <span>${connected ? "你只能查看自己的排班、提交自己的申请。" : "请使用领导在 Supabase 中创建的员工邮箱登录。"}</span>
+        </div>
+      </section>
+    `}
+    ${isLeader() ? `
+      <div class="dashboard-grid">
+        <section class="content-card">
         <div class="section-head">
           <div>
             <h2 class="section-title">数据备份</h2>
@@ -905,6 +950,69 @@ function renderSettings() {
         <pre class="code-box"><code>${exportText}</code></pre>
       </section>
     </div>
+    ` : ""}
+  `;
+}
+
+function renderAccountStatus(authMember, authEmail) {
+  if (!canUseRemote()) {
+    return `<div class="alert"><strong>尚未登录</strong><span>先用 Supabase Auth 账号登录；领导登录后可维护人员姓名和邮箱绑定。</span></div>`;
+  }
+  if (!authMember) {
+    return `<div class="alert"><strong>账号未绑定人员</strong><span>${escapeHtml(authEmail || "当前邮箱")} 尚未绑定到领导、张三、李四或王五，请领导在人员与账号里填写这个邮箱。</span></div>`;
+  }
+  return `
+    <div class="account-card">
+      <div class="team-person">
+        <div class="avatar ${authMember.role === "leader" ? "leader" : ""}">${avatarText(authMember)}</div>
+        <div>
+          <div class="person-name">${escapeHtml(authMember.name)}</div>
+          <div class="person-code">${authMember.role === "leader" ? "领导账号" : authMember.title} · ${escapeHtml(authMember.email)}</div>
+        </div>
+      </div>
+      <span class="chip ok">身份已绑定</span>
+    </div>
+  `;
+}
+
+function renderMemberSettings() {
+  return `
+    <section class="content-card">
+      <div class="section-head">
+        <div>
+          <h2 class="section-title">人员与账号</h2>
+          <div class="section-subtitle">修改显示姓名，并把 Supabase 登录邮箱绑定到对应人员。</div>
+        </div>
+      </div>
+      <form class="form-grid" data-action="save-members">
+        <div class="member-settings-list">
+          ${state.members.map((member) => `
+            <div class="member-edit-row">
+              <div class="member-edit-head">
+                <div class="avatar ${member.role === "leader" ? "leader" : ""}">${avatarText(member)}</div>
+                <div>
+                  <div class="person-name">${escapeHtml(member.role === "leader" ? "负责人" : member.title)}</div>
+                  <div class="person-code">${member.role === "leader" ? "管理员权限" : `轮班代码 ${member.code}`}</div>
+                </div>
+              </div>
+              <div class="member-edit-fields">
+                <div class="field-row">
+                  <label for="member-name-${member.id}">显示名称</label>
+                  <input id="member-name-${member.id}" name="member-name-${member.id}" type="text" value="${escapeHtml(member.name)}" required />
+                </div>
+                <div class="field-row">
+                  <label for="member-email-${member.id}">登录邮箱</label>
+                  <input id="member-email-${member.id}" name="member-email-${member.id}" type="email" value="${escapeHtml(member.email || "")}" placeholder="${escapeHtml(member.email || "name@example.com")}" />
+                </div>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+        <div class="button-row">
+          <button class="primary-button" type="submit">保存人员信息</button>
+        </div>
+      </form>
+    </section>
   `;
 }
 
@@ -1035,6 +1143,9 @@ function handleSubmit(event) {
   }
   if (action === "save-supabase") {
     saveSupabaseSettings(formData);
+  }
+  if (action === "save-members") {
+    saveMembers(formData);
   }
   if (action === "import-json") {
     importJson(formData);
@@ -1223,7 +1334,7 @@ function approveRequest(id) {
     : recommendReplacement(request.date, request.originalShift, request.memberId);
   request.status = "approved";
   request.reviewedAt = new Date().toISOString();
-  request.reviewedBy = state.currentUserId;
+  request.reviewedBy = getActorId();
   addOverride({
     date: request.date,
     memberId: request.memberId,
@@ -1253,7 +1364,7 @@ function rejectRequest(id) {
   if (!request || request.status !== "pending") return;
   request.status = "rejected";
   request.reviewedAt = new Date().toISOString();
-  request.reviewedBy = state.currentUserId;
+  request.reviewedBy = getActorId();
   addLog("审批拒绝", `${employeeName(getMember(request.memberId))} ${formatDateShort(request.date)} 申请已拒绝`);
   persistState();
   render();
@@ -1311,11 +1422,37 @@ function removeHoliday(id) {
   showToast("已移除节假日调整");
 }
 
+function saveMembers(formData) {
+  if (!isLeader()) {
+    showToast("只有领导账号可以维护人员信息");
+    return;
+  }
+
+  const nextMembers = state.members.map((member) => ({
+    ...member,
+    name: cleanText(formData.get(`member-name-${member.id}`)) || member.name,
+    email: normalizeEmail(formData.get(`member-email-${member.id}`)),
+  }));
+  const emails = nextMembers.map((member) => member.email).filter(Boolean);
+  const duplicatedEmail = emails.find((email, index) => emails.indexOf(email) !== index);
+  if (duplicatedEmail) {
+    showToast(`邮箱重复：${duplicatedEmail}`);
+    return;
+  }
+
+  state.members = nextMembers;
+  applyAuthenticatedIdentity();
+  addLog("更新人员信息", "已修改显示姓名或账号绑定邮箱");
+  persistState();
+  render();
+  showToast("人员信息已保存并同步");
+}
+
 function addOverride(partial) {
   state.overrides.push({
     id: makeId("ovr"),
     createdAt: new Date().toISOString(),
-    createdBy: state.currentUserId,
+    createdBy: getActorId(),
     ...partial,
   });
 }
@@ -1326,7 +1463,7 @@ function addLog(title, detail) {
     title,
     detail,
     createdAt: new Date().toISOString(),
-    createdBy: state.currentUserId,
+    createdBy: getActorId(),
   });
 }
 
@@ -1490,6 +1627,8 @@ function getMemberByShift(assignments, shift) {
 }
 
 function getCurrentUser() {
+  const authMember = getAuthenticatedMember();
+  if (authMember && authMember.role === "employee") return authMember;
   return getMember(state.currentUserId) || state.members[0];
 }
 
@@ -1497,12 +1636,39 @@ function getMember(id, source = state) {
   return source.members.find((member) => member.id === id);
 }
 
+function getMemberByEmail(email, source = state) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return null;
+  return source.members.find((member) => normalizeEmail(member.email) === normalizedEmail) || null;
+}
+
+function getAuthenticatedMember() {
+  if (!canUseRemote()) return null;
+  return getMemberByEmail(getAuthEmail());
+}
+
+function getActor() {
+  return getAuthenticatedMember() || getCurrentUser();
+}
+
+function getActorId() {
+  return getActor().id;
+}
+
+function applyAuthenticatedIdentity(force = false) {
+  const authMember = getAuthenticatedMember();
+  if (!authMember) return;
+  if (force || authMember.role === "employee" || !getMember(state.currentUserId)) {
+    state.currentUserId = authMember.id;
+  }
+}
+
 function getEmployees() {
   return state.members.filter((member) => member.role === "employee");
 }
 
 function isLeader() {
-  return getCurrentUser().role === "leader";
+  return getActor().role === "leader";
 }
 
 function employeeName(member) {
@@ -1602,6 +1768,14 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function cleanText(value) {
+  return String(value ?? "").trim();
+}
+
+function normalizeEmail(value) {
+  return cleanText(value).toLowerCase();
+}
+
 function showToast(message) {
   document.querySelector(".toast")?.remove();
   const toast = document.createElement("div");
@@ -1661,6 +1835,11 @@ function loadSupabaseConfig() {
   }
 }
 
+function getAuthEmail() {
+  const config = loadSupabaseConfig();
+  return config.accessToken ? normalizeEmail(config.email) : "";
+}
+
 function saveSupabaseConfig(config) {
   localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify(config));
 }
@@ -1684,13 +1863,14 @@ function getInitialSyncStatus() {
 async function saveSupabaseSettings(formData) {
   const url = String(formData.get("url") || "").trim().replace(/\/$/, "");
   const anonKey = String(formData.get("anonKey") || "").trim();
-  const email = String(formData.get("email") || "").trim();
+  const email = normalizeEmail(formData.get("email"));
   const password = String(formData.get("password") || "");
   if (!url || !anonKey || !email) {
     showToast("请填写 Supabase URL、publishable key 和邮箱");
     return;
   }
-  const config = { ...loadSupabaseConfig(), url, anonKey, email };
+  const existingConfig = loadSupabaseConfig();
+  const config = { ...existingConfig, url, anonKey, email };
   if (password) {
     try {
       syncStatus = "登录中";
@@ -1698,17 +1878,29 @@ async function saveSupabaseSettings(formData) {
       const session = await supabaseSignIn(url, anonKey, email, password);
       config.accessToken = session.access_token;
       config.refreshToken = session.refresh_token;
+      config.email = normalizeEmail(session.user?.email || email);
       saveSupabaseConfig(config);
+      applyAuthenticatedIdentity(true);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       syncStatus = "已连接";
-      await saveRemoteState(false);
+      if (isLeader()) {
+        await saveRemoteState(false);
+      } else {
+        await loadRemoteState(false, true);
+      }
       render();
-      showToast("Supabase 已连接，当前数据已上传");
+      const authMember = getAuthenticatedMember();
+      showToast(authMember ? `已登录为${authMember.name}` : "登录成功，请让领导绑定这个邮箱");
     } catch (error) {
       syncStatus = "连接失败";
       render();
       showToast(error.message || "Supabase 登录失败");
     }
   } else {
+    if (normalizeEmail(existingConfig.email) !== email) {
+      delete config.accessToken;
+      delete config.refreshToken;
+    }
     saveSupabaseConfig(config);
     syncStatus = canUseRemote() ? "已连接" : "已保存配置";
     render();
@@ -1734,12 +1926,16 @@ async function supabaseSignIn(url, anonKey, email, password) {
 
 async function syncNow() {
   if (!canUseRemote()) {
-    if (isLeader()) ui.view = "settings";
+    ui.view = "settings";
     render();
-    showToast(isLeader() ? "请先在管理里登录 Supabase" : "请让领导先完成云端同步登录");
+    showToast("请先登录 Supabase 同步账号");
     return;
   }
-  await saveRemoteState(false);
+  if (isLeader()) {
+    await saveRemoteState(false);
+  } else {
+    await loadRemoteState(false, true);
+  }
   render();
   showToast("同步完成");
 }
@@ -1759,6 +1955,11 @@ function queueRemoteSave() {
   remoteSaveTimer = setTimeout(() => saveRemoteState(false), 800);
 }
 
+function getRemoteStatePayload() {
+  const { currentUserId, ...remoteState } = state;
+  return remoteState;
+}
+
 async function saveRemoteState(showResult = true) {
   if (!canUseRemote()) {
     if (showResult) showToast("请先连接 Supabase");
@@ -1776,7 +1977,7 @@ async function saveRemoteState(showResult = true) {
       },
       body: JSON.stringify({
         id: "main",
-        state,
+        state: getRemoteStatePayload(),
       }),
     }, config);
     if (!response.ok) {
@@ -1793,7 +1994,7 @@ async function saveRemoteState(showResult = true) {
   }
 }
 
-async function loadRemoteState(showResult = true) {
+async function loadRemoteState(showResult = true, force = false) {
   if (!canUseRemote()) {
     if (showResult) showToast("请先连接 Supabase");
     return;
@@ -1802,6 +2003,7 @@ async function loadRemoteState(showResult = true) {
   try {
     syncStatus = "读取中";
     render();
+    const localUserId = state.currentUserId;
     const response = await supabaseRequest("/rest/v1/schedule_app_state?id=eq.main&select=state,updated_at&limit=1", {
       method: "GET",
     }, config);
@@ -1809,8 +2011,10 @@ async function loadRemoteState(showResult = true) {
     if (!response.ok) throw new Error(body.message || "云端读取失败");
     if (Array.isArray(body) && body[0]?.state) {
       const remoteState = normalizeState(body[0].state);
-      if (!state.updatedAt || remoteState.updatedAt >= state.updatedAt || showResult) {
+      if (force || !state.updatedAt || remoteState.updatedAt >= state.updatedAt || showResult) {
         state = remoteState;
+        state.currentUserId = localUserId;
+        applyAuthenticatedIdentity();
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       }
     }
