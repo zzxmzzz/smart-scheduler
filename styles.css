@@ -806,6 +806,11 @@ button {
   background: currentColor;
 }
 
+.identity-lock.is-warning {
+  color: var(--orange);
+  background: var(--orange-soft);
+}
+
 .select-trigger {
   display: flex;
   align-items: center;

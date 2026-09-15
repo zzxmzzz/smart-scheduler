@@ -161,6 +161,7 @@ function persistState(options = {}) {
 }
 
 function render() {
+  if (hasUnboundAuthenticatedAccount()) ui.view = "settings";
   const user = getCurrentUser();
   app.innerHTML = `
     <div class="app-shell">
@@ -232,6 +233,14 @@ function renderWeekControl() {
 
 function renderUserSelect(id) {
   const authMember = getAuthenticatedMember();
+  if (hasUnboundAuthenticatedAccount()) {
+    return `
+      <div class="identity-lock is-warning" title="当前账号尚未绑定人员">
+        <span class="identity-dot"></span>
+        <span>未绑定</span>
+      </div>
+    `;
+  }
   if (authMember && authMember.role === "employee") {
     return `
       <div class="identity-lock" title="已登录账号，身份已自动锁定">
@@ -355,12 +364,16 @@ function renderNav(className) {
 }
 
 function renderView() {
+  const views = {
+    home: renderHome,
+    mine: renderMine,
+    requests: renderRequests,
+    stats: renderStats,
+    settings: renderSettings,
+  };
+  const activeView = views[ui.view] ? ui.view : "home";
   return `
-    <section class="view ${ui.view === "home" ? "is-active" : ""}">${renderHome()}</section>
-    <section class="view ${ui.view === "mine" ? "is-active" : ""}">${renderMine()}</section>
-    <section class="view ${ui.view === "requests" ? "is-active" : ""}">${renderRequests()}</section>
-    <section class="view ${ui.view === "stats" ? "is-active" : ""}">${renderStats()}</section>
-    <section class="view ${ui.view === "settings" ? "is-active" : ""}">${renderSettings()}</section>
+    <section class="view is-active">${views[activeView]()}</section>
   `;
 }
 
@@ -1629,6 +1642,7 @@ function getMemberByShift(assignments, shift) {
 function getCurrentUser() {
   const authMember = getAuthenticatedMember();
   if (authMember && authMember.role === "employee") return authMember;
+  if (hasUnboundAuthenticatedAccount()) return getUnboundMember();
   return getMember(state.currentUserId) || state.members[0];
 }
 
@@ -1647,7 +1661,23 @@ function getAuthenticatedMember() {
   return getMemberByEmail(getAuthEmail());
 }
 
+function hasUnboundAuthenticatedAccount() {
+  return Boolean(canUseRemote() && getAuthEmail() && !getAuthenticatedMember());
+}
+
+function getUnboundMember() {
+  return {
+    id: "unbound",
+    code: "?",
+    name: "未绑定账号",
+    role: "employee",
+    title: "请联系领导绑定邮箱",
+    email: getAuthEmail(),
+  };
+}
+
 function getActor() {
+  if (hasUnboundAuthenticatedAccount()) return getUnboundMember();
   return getAuthenticatedMember() || getCurrentUser();
 }
 
@@ -1880,14 +1910,10 @@ async function saveSupabaseSettings(formData) {
       config.refreshToken = session.refresh_token;
       config.email = normalizeEmail(session.user?.email || email);
       saveSupabaseConfig(config);
+      syncStatus = "已连接";
+      await loadRemoteState(false, true);
       applyAuthenticatedIdentity(true);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      syncStatus = "已连接";
-      if (isLeader()) {
-        await saveRemoteState(false);
-      } else {
-        await loadRemoteState(false, true);
-      }
       render();
       const authMember = getAuthenticatedMember();
       showToast(authMember ? `已登录为${authMember.name}` : "登录成功，请让领导绑定这个邮箱");
