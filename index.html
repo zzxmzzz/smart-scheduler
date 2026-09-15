@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>小组智能排班</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div class="app-loading">正在加载排班系统...</div>
+    </div>
+
+    <template id="modal-template">
+      <div class="modal-backdrop" data-action="close-modal">
+        <section class="modal-sheet" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+          <div class="modal-handle"></div>
+          <div id="modal-content"></div>
+        </section>
+      </div>
+    </template>
+
+    <script defer src="./app.js"></script>
+  </body>
+</html>
